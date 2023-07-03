@@ -78,10 +78,127 @@ variable "public_zone_name" {
     default = "jijinmichael.online"
 }
 # ----------------------------------------------------------
-# For nat gateway
+# For nat gateway. This variable definition can be used to configure whether or not to create a Network Address Translation (NAT) resource in your infrastructure provisioning code. By setting the default value to false, it means that the NAT resource will not be created by default unless the variable is explicitly set to true when using it.
 # ----------------------------------------------------------
 variable "enable_natgw" {
     type = bool
     default = true
     }
 ```
+## Create a provider.tf file
+
+> provider.tf
+```
+provider "aws" {
+  region     = var.region
+  access_key = var.access_key
+  secret_key = var.secret_key
+}
+```
+## Create datasource.tf file
+
+> datasource.tf
+```
+data "aws_route53_zone" "jijinmichaelonline" {
+  name         = var.public_zone_name
+  private_zone = false
+}
+# ----------------------------------------------------------
+# Retrieve the list of availability zones in a particular region.
+# ----------------------------------------------------------
+
+data "aws_availability_zones" "available" {
+  state = "available"
+}
+```
+## Resource code definitionin main.tf
+
+> main.tf
+```
+# ----------------------------------------------------------
+#  Vpc Creation
+# ----------------------------------------------------------
+resource "aws_vpc" "vpc" {
+  cidr_block       = var.main_network
+  instance_tenancy = "default"
+    enable_dns_hostnames = true
+
+  tags = {
+      Name      = "${var.project_name}-${var.project_env}"
+    "Project" = var.project_name
+    "Env"     = var.project_env
+  }
+}
+# ----------------------------------------------------------
+# Creating igw
+# ----------------------------------------------------------
+resource "aws_internet_gateway" "igw" {
+  vpc_id = aws_vpc.vpc.id
+
+  tags = {
+    Name      = "${var.project_name}-${var.project_env}"
+    "Project" = var.project_name
+    "Env"     = var.project_env
+  }
+}
+# ----------------------------------------------------------
+# Creating public subnets
+# ----------------------------------------------------------
+resource "aws_subnet" "public" {
+    count = 3
+  vpc_id     = aws_vpc.vpc.id
+  cidr_block = cidrsubnet(var.main_network, 3, "${count.index}")
+    map_public_ip_on_launch = true
+    availability_zone = data.aws_availability_zones.available.names[count.index]
+
+  tags = {
+    Name      = "${var.project_name}-${var.project_env}-public-${count.index +1}"
+    "Project" = var.project_name
+    "Env"     = var.project_env
+  }
+}
+# ----------------------------------------------------------
+# Creating private subnets
+# ----------------------------------------------------------
+resource "aws_subnet" "private" {
+    count = 3
+  vpc_id     = aws_vpc.vpc.id
+  cidr_block = cidrsubnet(var.main_network, 3, "${count.index +3}")
+    map_public_ip_on_launch = false
+    availability_zone = data.aws_availability_zones.available.names[count.index]
+
+  tags = {
+    Name      = "${var.project_name}-${var.project_env}-private-${count.index +1}"
+    "Project" = var.project_name
+    "Env"     = var.project_env
+  }
+}
+# ----------------------------------------------------------
+# Creating Elastic IP. The count argument is set to 1 if var.enable_natgw == true, indicating that one EIP should be created.
+# ----------------------------------------------------------
+resource "aws_eip" "nat-gateway" {
+    count = var.enable_natgw == true ? 1 : 0
+  
+  domain   = "vpc"
+      tags = {
+    Name      = "${var.project_name}-${var.project_env}-nat-gateway"
+    "Project" = var.project_name
+    "Env"     = var.project_env
+  }
+}
+# ----------------------------------------------------------
+# Creating nat gateway. The count argument is set to 1 if var.enable_natgw == true, indicating that the above EIP should be assign to the below nat gateway.
+# ----------------------------------------------------------
+resource "aws_nat_gateway" "nat-gateway" {
+    count = var.enable_natgw == true ? 1 : 0
+  allocation_id = aws_eip.nat-gateway.0.id
+  subnet_id     = aws_subnet.public.1.id
+
+  tags = {
+    Name      = "${var.project_name}-${var.project_env}-nat-gateway"
+    "Project" = var.project_name
+    "Env"     = var.project_env
+  } 
+  depends_on = [aws_internet_gateway.igw]
+}
+
