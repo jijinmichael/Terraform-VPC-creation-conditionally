@@ -455,7 +455,3 @@ resource "aws_instance" "Wordpress-Backend" {
     create_before_destroy = true
   }
 }
-
-
-
-
