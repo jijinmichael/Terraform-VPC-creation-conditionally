@@ -455,3 +455,169 @@ resource "aws_instance" "Wordpress-Backend" {
     create_before_destroy = true
   }
 }
+```
+## Configuring Route53
+
+> route53.tf
+```
+# ----------------------------------------------------------
+# Creating a private zone jijinmichael.local
+# ----------------------------------------------------------
+resource "aws_route53_zone" "private" {
+  name = var.private_zone_name
+    vpc {
+    vpc_id = aws_vpc.vpc.id
+  }
+tags                   = { "Name" = "${var.project_name}-${var.project_env}-private", 
+                            "Project" = var.project_name, 
+                            "Env" = var.project_env, 
+                             }
+}
+# ----------------------------------------------------------
+# Pointing frontend.jijinmichael.local to frontend's private ip
+# ----------------------------------------------------------
+resource "aws_route53_record" "private_frontend" {
+  zone_id = aws_route53_zone.private.zone_id
+  name    = "frontend"
+  type    = "A"
+  ttl     = 300
+  records = [aws_instance.Wordpress-Frontend.private_ip]
+}
+# ----------------------------------------------------------
+# Pointing bastion.jijinmichael.local to bastion's private ip
+# ----------------------------------------------------------
+resource "aws_route53_record" "private_bastion" {
+  zone_id = aws_route53_zone.private.zone_id
+  name    = "bastion"
+  type    = "A"
+  ttl     = 300
+  records = [aws_instance.Wordpress-Bastion.private_ip]
+}
+# ----------------------------------------------------------
+# Pointing backend.jijinmichael.local to bastion's private ip
+# ----------------------------------------------------------
+resource "aws_route53_record" "private_backend" {
+  zone_id = aws_route53_zone.private.zone_id
+  name    = "backend"
+  type    = "A"
+  ttl     = 300
+  records = [aws_instance.Wordpress-Backend.private_ip]
+}
+# ----------------------------------------------------------
+# Pointing blog.jijinmichael.online to frontend public IP
+# ----------------------------------------------------------
+resource "aws_route53_record" "public_frontend" {
+  zone_id = data.aws_route53_zone.jijinmichaelonline.id
+  name    = "blog"
+  type    = "A"
+  ttl     = 300
+  records = [aws_instance.Wordpress-Frontend.public_ip]
+}
+```
+
+## Creating output.tf file
+
+> output.tf
+```
+output "AZs" {
+    value = data.aws_availability_zones.available
+}
+output "subnet-1" {
+    value = cidrsubnet(var.main_network, 3, 0)
+}
+output "subnet-2" {
+    value = cidrsubnet(var.main_network, 3, 1)
+}
+output "subnet-3" {
+    value = cidrsubnet(var.main_network, 3, 2)
+}
+output "subnet-4" {
+    value = cidrsubnet(var.main_network, 3, 3)
+}
+output "subnet-5" {
+    value = cidrsubnet(var.main_network, 3, 4)
+}
+output "subnet-6" {
+    value = cidrsubnet(var.main_network, 3, 5)
+}
+output "subnet-7" {
+    value = cidrsubnet(var.main_network, 3, 6)
+}
+output "subnet-8" {
+    value = cidrsubnet(var.main_network, 3, 7)
+}
+
+output "Bastion-Server-Public-IP" {
+    value = aws_instance.Wordpress-Bastion.public_ip
+}
+output "Bastion-Server-Private-IP" {
+    value = aws_instance.Wordpress-Bastion.private_ip
+}
+output "Frontend-Server-Public-IP" {
+    value = aws_instance.Wordpress-Frontend.public_ip
+}
+output "Frontend-Server-Private-IP" {
+    value = aws_instance.Wordpress-Frontend.private_ip
+}
+output "Backend-Server-Private-IP" {
+    value = aws_instance.Wordpress-Backend.private_ip
+}
+output "Frontend_Public_URL" {
+    value = "http://${aws_route53_record.public_frontend.fqdn}"
+}
+```
+
+## Lets validate the terraform files using
+```
+terraform validate
+```
+
+## Lets plan the architecture and verify once again
+```
+terraform plan
+```
+
+## Lets apply the above architecture to the AWS.
+```
+terraform apply
+```
+
+## Userdata for the above frontend instance
+
+> wordpress.sh
+```
+#! /bin/bash
+yum install httpd php php-mysqlnd -y
+systemctl restart httpd php-fpm
+systemctl enable httpd php-fpm
+cd /var/www/html/
+wget -q https://wordpress.org/latest.tar.gz
+tar -xvf latest.tar.gz
+mv wordpress/* .
+chown -R apache:apache /var/www/html/
+mv wp-config-sample.php wp-config.php
+sed -i "s/database_name_here/wordpressdb/" wp-config.php
+sed -i "s/username_here/wordpressuser/" wp-config.php
+sed -i "s/password_here/wordpress-user/" wp-config.php
+sed -i "s/localhost/backend.jijinmichael.local/" wp-config.php
+```
+
+## serdata for the above backend instance
+
+> mysql.sh
+```
+#! /bin/bash
+
+yum install mariadb105-server -y
+systemctl restart mariadb.service
+systemctl enable mariadb.service
+mysql -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED BY 'test123';"
+mysql -u root -ptest123 -e "CREATE DATABASE wordpressdb;"
+mysql -u root -ptest123 -e "CREATE USER 'wordpressuser'@'%' IDENTIFIED BY 'wordpress-user';"
+mysql -u root -ptest123 -e "GRANT ALL PRIVILEGES ON wordpressdb.* TO 'wordpressuser'@'%';"
+mysql -u root -ptest -e "flush privileges;"
+```
+
+After this you can access your wordpress site named http://blog.jijinmichael.online. Just configure the wp-admin details only. The rest of the Wordpress installation and its db connection to the backend will be fully automated in the above terraform code.
+  
+
